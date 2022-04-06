@@ -43,10 +43,10 @@ typedef struct  {
 #define INCREMENTA_MIN_PIO_IDX		  28
 #define INCREMENTA_MIN_PIO_IDX_MASK  (1u << INCREMENTA_MIN_PIO_IDX)
 
-#define INCREMENTA_SEC_PIO			  PIOC
-#define INCREMENTA_SEC_PIO_ID         ID_PIOC
-#define INCREMENTA_SEC_PIO_IDX		  31
-#define INCREMENTA_SEC_PIO_IDX_MASK   (1u << INCREMENTA_SEC_PIO_IDX)
+#define INCREMENTA_SEC_PIO PIOC
+#define INCREMENTA_SEC_PIO_ID ID_PIOC
+#define INCREMENTA_SEC_PIO_IDX 31
+#define INCREMENTA_SEC_PIO_IDX_MASK (1u << INCREMENTA_SEC_PIO_IDX) // esse já está pronto.
 
 #define START_STOP_PIO			  PIOA
 #define START_STOP_PIO_ID           ID_PIOA
@@ -61,6 +61,7 @@ volatile char flag_rtc_sec = 0;
 volatile char flag_incrementa_min = 0;
 volatile char flag_incrementa_sec = 0;
 volatile char flag_start_stop = 0;
+volatile char flag_tc_sec = 0;
 
 
 
@@ -103,9 +104,9 @@ void start_stop_callback(void){
 	flag_start_stop = 1;
 }
 
-void TC0_Handler(void) {
-	volatile uint32_t status = tc_get_status(TC0, 0);
-	pin_toggle(LED3_PIO, LED3_PIO_IDX_MASK);
+void TC1_Handler(void) {
+	volatile uint32_t status = tc_get_status(TC0, 1);
+	flag_tc_sec = 1;
 }
 
 
@@ -133,6 +134,26 @@ void RTC_Handler(void) {
 /* Funcoes                                                              */
 /************************************************************************/
 
+void configure_output(Pio *p_pio, const pio_type_t ul_type, const uint32_t ul_mask, const uint32_t ul_attribute, uint32_t ul_id ){
+	pmc_enable_periph_clk(ul_id);
+	pio_configure(p_pio, ul_type, ul_mask, ul_attribute);
+}
+
+void configure_input(Pio *p_pio, const pio_type_t ul_type, const uint32_t ul_mask, const uint32_t ul_attribute, uint32_t ul_id){
+	pmc_enable_periph_clk(ul_id);
+	pio_configure(p_pio, ul_type, ul_mask, ul_attribute);
+	pio_set_debounce_filter(p_pio, ul_mask, 60);
+}
+
+void configure_interruption(Pio *p_pio, uint32_t ul_id, uint32_t ul_mask, uint32_t ul_attr, void (*p_handler) (uint32_t, uint32_t)){
+	pio_handler_set(p_pio, ul_id, ul_mask, ul_attr, p_handler);
+	pio_enable_interrupt(p_pio, ul_mask);
+	pio_get_interrupt_status(p_pio);
+	NVIC_EnableIRQ(ul_id);
+	NVIC_SetPriority(ul_id, 4);
+}
+
+
 void init(void) {
 	// Initialize the board clock
 	sysclk_init();
@@ -149,47 +170,14 @@ void init(void) {
 	pio_set_output(LED3_PIO, LED3_PIO_IDX_MASK, 1, 0, 1);
 	
 	
-	// Botão de mudança de frequência:
-	pmc_enable_periph_clk(INCREMENTA_MIN_PIO_ID);
-	pio_configure(INCREMENTA_MIN_PIO, PIO_INPUT, INCREMENTA_MIN_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
-	pio_set_debounce_filter(INCREMENTA_MIN_PIO, INCREMENTA_MIN_PIO_IDX_MASK, 60);
-	pio_handler_set(INCREMENTA_MIN_PIO,
-	INCREMENTA_MIN_PIO_ID,
-	INCREMENTA_MIN_PIO_IDX_MASK,
-	PIO_IT_EDGE,
-	incrementa_min_callback);
-	pio_enable_interrupt(INCREMENTA_MIN_PIO, INCREMENTA_MIN_PIO_IDX_MASK);
-	pio_get_interrupt_status(INCREMENTA_MIN_PIO);
-	NVIC_EnableIRQ(INCREMENTA_MIN_PIO_ID);
-	NVIC_SetPriority(INCREMENTA_MIN_PIO_ID, 4);
 	
-	// Botão de mudança de frequência:
-	pmc_enable_periph_clk(INCREMENTA_SEC_PIO_ID);
-	pio_configure(INCREMENTA_SEC_PIO, PIO_INPUT, INCREMENTA_SEC_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
-	pio_set_debounce_filter(INCREMENTA_SEC_PIO, INCREMENTA_SEC_PIO_IDX_MASK, 60);
-	pio_handler_set(INCREMENTA_SEC_PIO,
-	INCREMENTA_SEC_PIO_ID,
-	INCREMENTA_SEC_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	incrementa_sec_callback);
-	pio_enable_interrupt(INCREMENTA_SEC_PIO, INCREMENTA_SEC_PIO_IDX_MASK);
-	pio_get_interrupt_status(INCREMENTA_SEC_PIO);
-	NVIC_EnableIRQ(INCREMENTA_SEC_PIO_ID);
-	NVIC_SetPriority(INCREMENTA_SEC_PIO_ID, 5);
+	configure_input(INCREMENTA_MIN_PIO, PIO_INPUT, INCREMENTA_MIN_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE, INCREMENTA_MIN_PIO_ID);
+	configure_input(INCREMENTA_SEC_PIO, PIO_INPUT, INCREMENTA_SEC_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE, INCREMENTA_SEC_PIO_ID);
+	configure_input(START_STOP_PIO, PIO_INPUT, START_STOP_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE, START_STOP_PIO_ID);
 	
-	// Botão de mudança de frequência:
-	pmc_enable_periph_clk(START_STOP_PIO_ID);
-	pio_configure(START_STOP_PIO, PIO_INPUT, START_STOP_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
-	pio_set_debounce_filter(START_STOP_PIO, START_STOP_PIO_IDX_MASK, 60);
-	pio_handler_set(START_STOP_PIO,
-	START_STOP_PIO_ID,
-	START_STOP_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	start_stop_callback);
-	pio_enable_interrupt(START_STOP_PIO, START_STOP_PIO_IDX_MASK);
-	pio_get_interrupt_status(START_STOP_PIO);
-	NVIC_EnableIRQ(START_STOP_PIO_ID);
-	NVIC_SetPriority(START_STOP_PIO_ID, 4);
+	configure_interruption(INCREMENTA_MIN_PIO, INCREMENTA_MIN_PIO_ID, INCREMENTA_MIN_PIO_IDX_MASK, PIO_IT_EDGE, incrementa_min_callback);
+	configure_interruption(INCREMENTA_SEC_PIO, INCREMENTA_SEC_PIO_ID, INCREMENTA_SEC_PIO_IDX_MASK, PIO_IT_EDGE, incrementa_sec_callback);
+	configure_interruption(START_STOP_PIO, START_STOP_PIO_ID, START_STOP_PIO_IDX_MASK, PIO_IT_FALL_EDGE, start_stop_callback);
 }
 
 /**
@@ -197,9 +185,9 @@ void init(void) {
 */
 void pin_toggle(Pio *pio, uint32_t mask) {
   if(pio_get_output_data_status(pio, mask))
-    pio_clear(pio, mask);
+		pio_clear(pio, mask);
   else
-    pio_set(pio,mask);
+		pio_set(pio,mask);
 }
 
 
@@ -244,10 +232,42 @@ void RTC_init(Rtc *rtc, uint32_t id_rtc, calendar t, uint32_t irq_type) {
 	rtc_enable_interrupt(rtc,  irq_type);
 }
 
+
 void display_date(uint32_t hour, uint32_t min, uint32_t sec){
 	char date_str[128];
 	sprintf(date_str, "%02d:%02d:%02d", hour, min, sec);
-	gfx_mono_draw_string(date_str, 5, 5, &sysfont);
+	gfx_mono_draw_string(date_str, 0, 0, &sysfont);
+}
+
+void display_timer(uint32_t min, uint32_t sec){
+	char timer_str[128];
+	sprintf(timer_str, "%02d:%02d", min, sec);
+	gfx_mono_draw_string(timer_str, 20, 18, &sysfont);
+}
+
+void start_timer(uint32_t min, uint32_t sec){
+	TC_init(TC0, ID_TC1, 1, 1);
+	tc_start(TC0, 1);
+	
+	uint32_t current_min = min;
+	uint32_t current_sec = sec;
+	
+	int counter = 0;
+	while(min*60 + sec > counter){
+		if(flag_tc_sec){
+			if(current_sec == 0){
+				current_sec = 59;
+				current_min-=1;
+			} else {
+				current_sec-=1;
+			}
+			display_timer(current_min, current_sec);
+			flag_tc_sec = 0;
+			counter++;
+		}
+	}
+	pin_toggle(LED3_PIO, LED3_PIO_IDX_MASK);
+	tc_stop(TC0, 1);
 }
 
 /************************************************************************/
@@ -264,9 +284,15 @@ int main(void){
 	calendar rtc_initial = {2022, 4, 6, 1, 16, 0, 0};
 	RTC_init(RTC, ID_RTC, rtc_initial, RTC_SR_SEC|RTC_SR_ALARM);
 
-
 	uint32_t current_hour, current_min, current_sec;
 	uint32_t current_year, current_month, current_day, current_week;
+	
+	uint32_t timer_min = 0;
+	uint32_t timer_sec = 0;
+	
+	display_timer(timer_min, timer_sec);
+	
+	float acel = 1;
 
 	while (1) {
 		if (flag_rtc_sec) {
@@ -274,7 +300,36 @@ int main(void){
 			rtc_get_date(RTC, &current_year, &current_month, &current_day, &current_week);
 			rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
 			display_date(current_hour, current_min, current_sec);
+		} else if (flag_incrementa_min){
+			if(timer_min < 59){
+				timer_min++;
+				if(acel < 10){
+					acel +=0.1;
+				}
+			}	
+			display_timer(timer_min,timer_sec);
+			delay_ms(500/acel);
+		} else if (flag_incrementa_sec){
+			if(timer_sec < 59){
+				timer_sec++;
+				if(acel < 10){
+					acel +=0.1;
+				}
+			}
+			display_timer(timer_min,timer_sec);
+			delay_ms(500/acel);
+		} else if (flag_start_stop){
+			pin_toggle(LED1_PIO, LED1_PIO_IDX_MASK);
+			start_timer(timer_min, timer_sec);
+			flag_start_stop = 0;
+			timer_min = 0;
+			timer_sec = 0;
+			display_timer(timer_min, timer_sec);
+			pin_toggle(LED1_PIO, LED1_PIO_IDX_MASK);
+		} else if (flag_incrementa_min || flag_incrementa_sec){
+			acel = 1; 
+		}else {
+			pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);	
 		}
-		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
 	}
 }
